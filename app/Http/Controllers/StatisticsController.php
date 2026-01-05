@@ -11,45 +11,82 @@ class StatisticsController extends Controller
 {
     public function index(Request $request)
     {
+        /* =========================
+           DATE RANGE
+        ========================== */
         $days = (int) $request->get('range', 30);
         $from = Carbon::now()->subDays($days);
 
-        // ✅ SOURCE OF TRUTH (QrLink)
-        $qrs = QrLink::where('user_id', (string) auth()->id())->get();
+        $userId = (string) auth()->id();
 
-        $totalQrCodes  = $qrs->count();
-        $totalVisits   = $qrs->sum('visit_count');     // 👈 21 (correct)
-        $totalQrScans  = $qrs->sum('qr_scan_count');   // 👈 4 (correct)
-        $totalLinks    = $totalVisits;                 // 👈 same as visits
-        $activeQrs     = $qrs->count();
+        /* =========================
+           SOURCE OF TRUTH (QrLink)
+        ========================== */
+        $qrs = QrLink::where('user_id', $userId)->get();
 
-        // 🔍 Logs ONLY for analytics
-        $logs = QrClickLog::whereIn(
-                    'qr_id',
-                    $qrs->pluck('_id')->map(fn($id) => (string)$id)
-                )
-                ->where('created_at', '>=', $from)
-                ->get();
+        $totalQrCodes = $qrs->count();
+        $totalVisits  = $qrs->sum('visit_count');     // ✅ ONLY from QrLink
+        $totalQrScans = $qrs->sum('qr_scan_count');   // ✅ ONLY from QrLink
+        $totalLinks   = $totalVisits;                 // same meaning
+        $activeQrs    = $qrs->count();                // future: is_active
+
+        /* =========================
+           ANALYTICS LOGS
+        ========================== */
+        $qrIds = $qrs->pluck('_id')->map(fn ($id) => (string) $id);
+
+        $logs = QrClickLog::whereIn('qr_id', $qrIds)
+            ->where('created_at', '>=', $from)
+            ->get();
+
+        /* =========================
+           GRAPHS
+        ========================== */
+
+        // 📊 Clicks per day
+        $clicksByDate = $logs
+            ->groupBy(fn ($log) => $log->created_at->format('Y-m-d'))
+            ->map->count();
+
+        // 🌍 Country
+        $countries = $logs
+            ->groupBy(fn ($l) => $l->country ?: 'Unknown')
+            ->map->count()
+            ->sortDesc();
+
+        // 📱 Device
+        $devices = $logs
+            ->groupBy(fn ($l) => $l->device_type ?: 'Unknown')
+            ->map->count();
+
+        // 🌐 Browser
+        $browsers = $logs
+            ->groupBy(fn ($l) => $l->browser ?: 'Other')
+            ->map->count();
+
+        // 🔀 QR vs Link split
+        $typeSplit = [
+            'qr'   => $logs->where('type', 'qr')->count(),
+            'link' => $logs->where('type', 'link')->count(),
+        ];
 
         return view('statistics.index', [
-            // CARDS
+            /* ===== CARDS ===== */
             'totalQrCodes' => $totalQrCodes,
             'totalLinks'   => $totalLinks,
             'totalVisits'  => $totalVisits,
             'totalQrScans' => $totalQrScans,
             'activeQrs'    => $activeQrs,
 
-            // FILTER
+            /* ===== FILTER ===== */
             'days' => $days,
 
-            // GRAPHS
-            'clicksByDate' => $logs->groupBy(
-                fn($l) => $l->created_at->format('d M')
-            )->map->count(),
-
-            'countries' => $logs->groupBy('country')->map->count(),
-            'devices'   => $logs->groupBy('device_type')->map->count(),
-            'browsers'  => $logs->groupBy('browser')->map->count(),
+            /* ===== CHART DATA ===== */
+            'clicksByDate' => $clicksByDate,
+            'countries'    => $countries,
+            'devices'      => $devices,
+            'browsers'     => $browsers,
+            'typeSplit'    => $typeSplit,
         ]);
     }
 }
