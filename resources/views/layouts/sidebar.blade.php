@@ -153,7 +153,7 @@
 </a>
 
 
-<a href="{{ ('/') }}"
+<a href="{{ url('/whatsapp-accounts') }}"
    class="flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200
           {{ request()->is('whatsapp-accounts')
              ? 'bg-gradient-to-r from-[#4C6FFF] to-[#8B5CF6] text-white shadow-lg shadow-blue-500/25'

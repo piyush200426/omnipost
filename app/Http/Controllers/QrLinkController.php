@@ -14,9 +14,6 @@ use BaconQrCode\Renderer\Image\SvgImageBackEnd;
 use BaconQrCode\Renderer\RendererStyle\RendererStyle;
 use BaconQrCode\Writer;
 
-
-
-
 class QrLinkController extends Controller
 {
     public function index()
@@ -53,61 +50,59 @@ class QrLinkController extends Controller
             abort(404);
         }
     }
-public function store(Request $request)
-{
-    try {
-        $request->validate([
-            'original_url'  => 'nullable|url',
-            'short_link_id' => 'nullable|string',
-            'label'         => 'nullable|string|max:255',
-        ]);
 
-        if (!$request->original_url && !$request->short_link_id) {
-            return back()->withErrors([
-                'original_url' => 'URL ya Short Link required hai'
+    public function store(Request $request)
+    {
+        try {
+            $request->validate([
+                'original_url'  => 'nullable|url',
+                'short_link_id' => 'nullable|string',
+                'label'         => 'nullable|string|max:255',
             ]);
+
+            if (!$request->original_url && !$request->short_link_id) {
+                return back()->withErrors([
+                    'original_url' => 'URL ya Short Link required hai'
+                ]);
+            }
+
+            do {
+                $shortCode = Str::random(6);
+            } while (QrLink::where('short_code', $shortCode)->exists());
+
+            $qrUrlForScan = url('/q/' . $shortCode . '?qr=1');
+
+            $renderer = new ImageRenderer(
+                new RendererStyle(300),
+                new SvgImageBackEnd()
+            );
+
+            $writer = new Writer($renderer);
+            $qrImage = $writer->writeString($qrUrlForScan);
+
+            $fileName = 'qr_' . $shortCode . '.svg';
+            $filePath = 'qrcodes/' . $fileName;
+
+            Storage::disk('public')->put($filePath, $qrImage);
+
+            QrLink::create([
+                'user_id'       => (string) Auth::id(),
+                'label'         => $request->label,
+                'original_url'  => $request->original_url,
+                'short_code'    => $shortCode,
+                'qr_image_path' => $filePath,
+                'visit_count'   => 0,
+                'qr_scan_count' => 0,
+            ]);
+
+            return redirect()
+                ->route('qr-links.index')
+                ->with('success', 'QR code generated successfully');
+        } catch (\Throwable $e) {
+            Log::error('QR store error', ['error' => $e->getMessage()]);
+            return back()->with('error', 'Something went wrong');
         }
-
-        do {
-            $shortCode = Str::random(6);
-        } while (QrLink::where('short_code', $shortCode)->exists());
-
-        // ✅ ONLY for QR scan (this stays)
-        $qrUrlForScan = url('/q/' . $shortCode . '?qr=1');
-
-        $renderer = new ImageRenderer(
-            new RendererStyle(300),
-            new SvgImageBackEnd()
-        );
-
-        $writer = new Writer($renderer);
-        $qrImage = $writer->writeString($qrUrlForScan);
-
-        $fileName = 'qr_' . $shortCode . '.svg';
-        $filePath = 'qrcodes/' . $fileName;
-
-        Storage::disk('public')->put($filePath, $qrImage);
-
-        QrLink::create([
-            'user_id'       => (string) Auth::id(),
-            'label'         => $request->label,
-            'original_url'  => $request->original_url,
-            'short_code'    => $shortCode,   // ✅ ONLY THIS
-            'qr_image_path' => $filePath,
-            'visit_count'   => 0,
-            'qr_scan_count' => 0,
-        ]);
-
-        return redirect()
-            ->route('qr-links.index')
-            ->with('success', 'QR code generated successfully');
-
-    } catch (\Throwable $e) {
-        Log::error('QR store error', ['error' => $e->getMessage()]);
-        return back()->with('error', 'Something went wrong');
     }
-}
-
 
     public function redirect(Request $request, $code)
     {
@@ -193,9 +188,11 @@ public function store(Request $request)
                 $writer = new Writer($renderer);
                 $svg = $writer->writeString(url('/q/' . $qr->short_code . '?qr=1'));
 
-                $svg = $this->applySvgDesign($svg, $request);
+               $svg = $this->applySvgDesign($svg, $request);
 
-                Storage::disk('public')->put($qr->qr_image_path, $svg);
+if (str_contains($svg, '<svg')) {
+    Storage::disk('public')->put($qr->qr_image_path, $svg);
+}
 
             }
 
@@ -263,54 +260,46 @@ public function store(Request $request)
             return ['city' => 'Unknown', 'country' => 'Unknown'];
         }
     }
-
- private function applySvgDesign(string $svg, Request $request): string
+private function applySvgDesign(string $svg, Request $request): string
 {
-    $fgColor = $request->foreground_color ?? '#000000';
-    $bgColor = $request->background_color ?? '#ffffff';
+    $fg = $request->foreground_color ?? '#000000';
+    $bg = $request->background_color ?? '#ffffff';
 
-    // ✅ STEP 1: PURELY remove XML declaration ONCE and forever
-    $svg = preg_replace('/^\s*<\?xml[^>]+>\s*/i', '', $svg);
+    // remove xml header
+    $svg = preg_replace('/<\?xml.*?\?>/i', '', $svg);
 
-    // ✅ STEP 2: Insert background rect immediately after <svg>
+    // add ONE background rect (safe)
     $svg = preg_replace(
         '/<svg([^>]*)>/i',
-        '<svg$1><rect width="100%" height="100%" fill="'.$bgColor.'"/>',
+        '<svg$1><rect width="100%" height="100%" fill="'.$bg.'" class="qr-bg"/>',
         $svg,
         1
     );
 
-    // ✅ STEP 3: Replace fills safely
+    // 🔥 IMPORTANT: color ONLY QR paths, NOT rect
     $svg = preg_replace(
-        '/fill="[^"]*"/i',
-        'fill="'.$fgColor.'"',
+        '/<path([^>]*)fill="[^"]*"([^>]*)>/i',
+        '<path$1fill="'.$fg.'"$2>',
         $svg
     );
 
-    // ❌ DO NOT re-add XML declaration
     return trim($svg);
 }
 
-public function downloadSvg($id)
-{
-    $qr = QrLink::where('_id', $id)->firstOrFail();
+    public function downloadSvg($id)
+    {
+        $qr = QrLink::where('_id', $id)->firstOrFail();
 
-    $path = storage_path('app/public/' . $qr->qr_image_path);
+        $path = storage_path('app/public/' . $qr->qr_image_path);
 
-    if (!file_exists($path)) {
-        abort(404);
+        if (!file_exists($path)) {
+            abort(404);
+        }
+
+        return response(
+            file_get_contents($path),
+            200,
+            ['Content-Type' => 'image/svg+xml']
+        );
     }
-
-    return response(
-        file_get_contents($path),
-        200,
-        ['Content-Type' => 'image/svg+xml']
-    );
 }
-
-
-
-
-}
-
-

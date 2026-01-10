@@ -15,10 +15,7 @@
 
     <!-- LEFT SIDE -->
     <div class="flex items-center gap-3">
-        <button onclick="openSidebar()"
-            class="md:hidden bg-[#4C6FFF] text-white p-2 rounded-lg shadow-sm">
-            ☰
-        </button>
+        
 
         <h2 class="text-xl font-bold whitespace-nowrap hidden md:block">
             Dashboard
